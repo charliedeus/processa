@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id   String @id @default(uuid())
+  name String
+  cpf  String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 🔹 processos onde ele é o dono (quem abriu)
+  processesOwned Process[]              @relation("ProcessOwner")
+  // 🔹 e-mails do usuário (pode ter vários)
+  emails         UserEmail[]
+  // departamentos ao qual o usuário é membro
+  memberships    DepartmentMembership[]
+
+  @@map("users")
+}
+
+model UserEmail {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  email      String    @unique
+  type       EmailType @default(PERSONAL)
+  isPrimary  Boolean   @default(false)
+  isVerified Boolean   @default(false)
+  verifiedAt DateTime?
+
+  // opcional: amarrar diretamente ao tenant (útil quando é corporativo)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("user_emails")
+}
+
+enum EmailType {
+  PERSONAL
+  CORPORATE
+}
+
+model Organization {
+  id           String  @id @default(uuid())
+  name         String
+  slug         String  @unique // será usado na URL
+  domain       String? @unique // opcional para validar o e-mail corporativo
+  processLabel String  @default("Processo")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  processes   Process[]
+  emails      UserEmail[]
+  departments Department[]
+
+  @@index([name])
+  @@map("organizations")
+}
+
+model Department {
+  id   String @id @default(uuid())
+  code String
+  name String
+
+  // tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // hierarchy
+  parentId String?
+  parent   Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Department[] @relation("DepartmentHierarchy")
+
+  // opcional: caminho materializado (útil no futuro p/ consultas de descendentes)
+  path String?
+
+  //  vínculos
+  memberships DepartmentMembership[]
+  processes   Process[] // Processos atualmente associados a este departamento
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, code]) // sigla única por org
+  @@unique([organizationId, name]) // nome único por org
+  @@index([organizationId])
+  @@index([parentId])
+  @@index([path])
+  @@map("departments")
+}
+
+model DepartmentMembership {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  role     DepartmentRole @default(MEMBER) // papel dentro do setor
+  isActive Boolean        @default(false) // para aprovação 
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, departmentId]) // vínculo por usuário-setor
+  @@index([departmentId])
+  @@index([userId])
+  @@map("department_membership")
+}
+
+enum DepartmentRole {
+  ADMIN
+  MANAGER
+  MEMBER
+  REQUESTER
+}
+
+model Process {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  status      ProcessStatus @default(OPEN)
+
+  // tenant
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // departamento ao qual o processo está associado ou disponível
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  // dono ou quem abriu o processo
+  ownerId String
+  owner   User   @relation("ProcessOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([ownerId])
+  @@index([status])
+  @@map("processes")
+}
+
+enum ProcessStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
