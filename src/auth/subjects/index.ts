@@ -1,7 +1,20 @@
-import type { OrganizationSubject } from './organization'
 import type { ProcessSubject } from './process'
+import type { OrganizationSubject } from './organization'
 
-export type AppSubjects =
+// ✅ Ações do app (CASL)
+export type AppAction =
+  | 'manage'
+  | 'get'
+  | 'create'
+  | 'update'
+  | 'read'
+  | 'delete'
+
+// ✅ Subjects do app (CASL) — sempre nomes (strings) ou 'all'
+export type AppSubject =
   | ProcessSubject
   | OrganizationSubject
-  | ['manage', 'all']
+  | 'Department'
+  | 'DepartmentMembership'
+  | 'User'
+  | 'all'

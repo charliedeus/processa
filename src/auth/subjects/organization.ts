@@ -1,14 +1,19 @@
 import { z } from 'zod'
 
-export const organizationSubject = z.tuple([
+// ✅ Validação (runtime) para pares [action, 'Organization']
+export const organizationTuple = z.tuple([
   z.union([
     z.literal('manage'),
     z.literal('get'),
     z.literal('create'),
     z.literal('update'),
-    z.literal('transfer_ownership'),
+    z.literal('read'),
+    z.literal('delete'),
   ]),
   z.literal('Organization'),
 ])
 
-export type OrganizationSubject = z.infer<typeof organizationSubject>
+export type OrganizationTuple = z.infer<typeof organizationTuple>
+
+// ✅ Nome do subject (para CASL)
+export type OrganizationSubject = 'Organization'

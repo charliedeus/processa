@@ -1,5 +1,6 @@
 import { email, z } from 'zod'
 import { roleSchema } from '../roles'
+import { DepartmentRole } from '@/generated/prisma'
 
 // Subschemas
 export const userEmailSchema = z.object({
@@ -10,7 +11,7 @@ export const userEmailSchema = z.object({
 
 export const departmentSchema = z.object({
   id: z.string().uuid(),
-  code: z.string(),
+  code: z.string().optional(),
   name: z.string(),
 })
 
@@ -18,7 +19,7 @@ export const membershipSchema = z.object({
   id: z.string().uuid(),
   departmentId: z.string().uuid(),
   // perfil do usuário dentro do departamento
-  profile: z.string().min(1),
+  role: z.custom<DepartmentRole>(),
   department: departmentSchema.optional(), // útil para telas e listas
 })
 
@@ -32,8 +33,7 @@ export const userSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   cpf: z.string(),
-  role: roleSchema,
-
+  role: z.enum(['ADMIN', 'REQUESTER']).optional(),
   emails: z.array(userEmailSchema).default([]),
 
   // departamentos aos quais o usuário pertence e seu perfil local

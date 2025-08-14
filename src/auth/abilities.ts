@@ -1,27 +1,80 @@
 import {
   AbilityBuilder,
-  CreateAbility,
   createMongoAbility,
-  ForcedSubject,
+  CreateAbility,
   MongoAbility,
 } from '@casl/ability'
-import type { User } from './models/user'
-import { permissions } from './permissions'
-import type { AppSubjects } from './subjects'
+import type { AppAction, AppSubject } from './subjects'
+import type { User } from './models'
 
-export type AppAbility = MongoAbility<AppSubjects>
+// Tipagem base (mantemos actions/subjects estritos)
+export type AppAbility = MongoAbility<[AppAction, AppSubject]>
 export const createAppAbility = createMongoAbility as CreateAbility<AppAbility>
 
-export function defineAbilityFor(user: User) {
-  const builder = new AbilityBuilder(createAppAbility)
+// Helper para tipar condições como 'any' e evitar o bug do TS com `$in`
+const where = <T extends object>(conditions: T) => conditions as any
 
-  if (typeof permissions[user.role] !== 'function') {
-    throw new Error(`Permissions for role ${user.role} not found.`)
+/**
+ * Define a ability do usuário:
+ * - Papéis departamentais (MANAGER / MEMBER)
+ * - Papel global opcional (ADMIN / REQUESTER)
+ */
+export function defineAbilityFor(user: User): AppAbility {
+  const { can, cannot, build } = new AbilityBuilder<AppAbility>(
+    createAppAbility,
+  )
+
+  // IDs de departamentos por papel departamental
+  const managerDeptIds = user.memberships
+    .filter((m) => m.role === 'MANAGER')
+    .map((m) => m.departmentId)
+
+  const memberDeptIds = user.memberships
+    .filter((m) => m.role === 'MEMBER')
+    .map((m) => m.departmentId)
+
+  // Papel global (opcional)
+  if (user.role === 'ADMIN') {
+    can('manage', 'all')
+  } else if (user.role === 'REQUESTER') {
+    can(['create', 'get'], 'Process')
   }
 
-  permissions[user.role](user, builder)
+  // MANAGER — poderes ampliados nos seus departamentos
+  if (managerDeptIds.length) {
+    // use undefined no 3º arg para cair no overload de CONDITIONS (4º arg)
+    can(
+      'manage',
+      'Process',
+      undefined,
+      where({ departmentId: { $in: managerDeptIds } }),
+    )
+    can(
+      'manage',
+      'DepartmentMembership',
+      undefined,
+      where({ departmentId: { $in: managerDeptIds } }),
+    )
+    can('read', 'Department', undefined, where({ id: { $in: managerDeptIds } }))
+  }
 
-  const ability = builder.build()
+  // MEMBER — poderes restritos nos seus departamentos
+  if (memberDeptIds.length) {
+    can(
+      ['create', 'get'],
+      'Process',
+      undefined,
+      where({ departmentId: { $in: memberDeptIds } }),
+    )
+    can('read', 'Department', undefined, where({ id: { $in: memberDeptIds } }))
+  }
 
-  return ability
+  // Regras comuns
+  can('read', 'User', undefined, where({ id: user.id }))
+  cannot('delete', 'User', undefined, where({ id: user.id }))
+
+  return build({
+    // permite usar objetos com __typename: 'Process' | 'Department' | ...
+    detectSubjectType: (obj) => (obj as any).__typename as AppSubject,
+  })
 }
