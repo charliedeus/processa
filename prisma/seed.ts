@@ -1,7 +1,12 @@
-// prisma/seed.ts
-import { PrismaClient, DepartmentRole } from '../src/generated/prisma'
+import {
+  PrismaClient,
+  DepartmentRole,
+  EmailType,
+} from '../src/generated/prisma'
+import { hash } from 'bcryptjs'
 
 const prisma = new PrismaClient()
+const DEFAULT_PASSWORD = '123456'
 
 function slugify(str: string) {
   return str
@@ -12,17 +17,52 @@ function slugify(str: string) {
     .replace(/(^\.|\.$)/g, '')
 }
 
+/** ================= CPF helpers (gera CPF VÁLIDO) ================= */
+function cpfCalcDigit(nums: number[]) {
+  // Peso decrescente: para D1 usa 10..2 (nums.length = 9),
+  // para D2 usa 11..2 (nums.length = 10, incluindo D1)
+  let factor = nums.length + 1
+  const total = nums.reduce((acc, n) => acc + n * factor--, 0)
+  const rest = total % 11
+  return rest < 2 ? 0 : 11 - rest
+}
+
+function cpfFromBase9(base9: string) {
+  const nums = base9.split('').map(Number)
+  const d1 = cpfCalcDigit(nums)
+  const d2 = cpfCalcDigit([...nums, d1])
+  return base9 + String(d1) + String(d2)
+}
+
+function makeBase9(idx: number) {
+  // base determinística de 9 dígitos
+  // começa em 100000000 e incrementa
+  return String(100_000_000 + idx).slice(-9)
+}
+
+function makeValidCpfByIndex(idx: number) {
+  const base9 = makeBase9(idx)
+  return cpfFromBase9(base9)
+}
+/** ================================================================= */
+
 async function main() {
   console.log('🗑 Limpando tabelas...')
 
-  await prisma.$transaction([
-    prisma.process.deleteMany(),
-    prisma.departmentMembership.deleteMany(),
-    prisma.userEmail.deleteMany(),
-    prisma.user.deleteMany(),
-    prisma.department.deleteMany(),
-    prisma.organization.deleteMany(),
-  ])
+  await prisma.$transaction(
+    [
+      prisma.process.deleteMany(),
+      prisma.departmentMembership.deleteMany(),
+      prisma.userEmail.deleteMany(),
+      prisma.user.deleteMany(),
+      prisma.department.deleteMany(),
+      prisma.organization.deleteMany(),
+      prisma.account?.deleteMany?.(), // caso existam (Auth.js)
+      prisma.session?.deleteMany?.(),
+      prisma.verificationToken?.deleteMany?.(),
+      prisma.passwordResetToken?.deleteMany?.(),
+    ].filter(Boolean) as any,
+  )
 
   console.log('🏗 Criando organização...')
   const agerba = await prisma.organization.create({
@@ -135,16 +175,14 @@ async function main() {
   }
 
   const plans: Plan[] = baseNames.map((name, idx) => {
-    // CPF fictício único por índice
-    const cpf = String(10_000_000_000 + idx)
-      .padEnd(11, '0')
-      .slice(0, 11)
+    // ✅ CPF VÁLIDO (com D1/D2 calculados)
+    const cpf = makeValidCpfByIndex(idx)
 
     // Distribui o depto primário por rodada
     const primaryDept = deptCodes[idx % deptCodes.length]
 
     // Regras de quem é MANAGER no primário:
-    // - Fulano da Silva (idx 0): MEMBER em NGTIC, mas também MANAGER em GAB (dupla regra abaixo)
+    // - Fulano da Silva (idx 0): MEMBER em NGTIC + MANAGER em GAB (ajuste específico abaixo)
     // - Maria Gerente (idx 1): MANAGER na DE
     // - Demais: a cada 5º usuário, será MANAGER no primário; outros MEMBER
     let isManagerPrimary = idx % 5 === 1 // usuários 1,6,11,... como MANAGER no primário
@@ -153,15 +191,12 @@ async function main() {
     // Ex.: a cada 3º usuário adiciona um extra
     const extraDepts: string[] = []
     if (idx % 3 === 0) {
-      // Escolhe um extra diferente do primário
       const extrasPool = deptCodes.filter((c) => c !== primaryDept)
       extraDepts.push(extrasPool[(idx / 3) % extrasPool.length])
     }
 
     // Ajustes específicos pedidos:
     if (name === 'Fulano da Silva') {
-      // quer: MEMBER no NGTIC + MANAGER no GAB
-      // Definimos primário = NGTIC como MEMBER e adicionamos GAB como MANAGER via tratamento especial abaixo
       return {
         name,
         cpf,
@@ -171,7 +206,6 @@ async function main() {
       }
     }
     if (name === 'Maria Gerente') {
-      // quer: MANAGER na DE
       return {
         name,
         cpf,
@@ -184,9 +218,13 @@ async function main() {
     return { name, cpf, primaryDept, isManagerPrimary, extraDepts }
   })
 
+  // hash padrão para todos
+  const passwordHash = await hash(DEFAULT_PASSWORD, 10)
+  const now = new Date()
+
   for (const plan of plans) {
     const localPart = slugify(plan.name)
-    const email = `${localPart}@${agerba.domain}`
+    const email = `${localPart}@${agerba.domain}`.toLowerCase()
 
     const primaryDeptId = deptByCode.get(plan.primaryDept)
     if (!primaryDeptId)
@@ -222,7 +260,6 @@ async function main() {
       const gabId = deptByCode.get('GAB')
       const ngticId = deptByCode.get('NGTIC')
       if (!gabId || !ngticId) throw new Error('GAB/NGTIC não encontrados')
-      // Sobrescreve garantidamente:
       membershipsData.length = 0
       membershipsData.push(
         { role: DepartmentRole.MEMBER, departmentId: ngticId },
@@ -233,14 +270,30 @@ async function main() {
     const created = await prisma.user.create({
       data: {
         name: plan.name,
-        cpf: plan.cpf,
+        cpf: plan.cpf, // ✅ agora é VÁLIDO
+
+        // 👇 novos campos do schema para Auth.js (Credentials)
+        email, // e-mail principal (login)
+        emailVerified: now, // seed já como verificado
+        passwordHash, // senha padrão 123456
+
+        // e-mails adicionais (mantém seu modelo)
         emails: {
-          create: { email, isPrimary: true },
+          create: {
+            email,
+            type: EmailType.CORPORATE,
+            isPrimary: true,
+            isVerified: true,
+            verifiedAt: now,
+            organization: { connect: { id: agerba.id } },
+          },
         },
+
         memberships: {
           create: membershipsData.map((m) => ({
             role: m.role,
             department: { connect: { id: m.departmentId } },
+            // isActive default(false) — mantém a regra de aprovação
           })),
         },
       },
@@ -253,10 +306,10 @@ async function main() {
     const summary = created.memberships
       .map((m) => `${m.department.code}:${m.role}`)
       .join(', ')
-
-    console.log(`✅ ${created.name} <${email}> → ${summary}`)
+    console.log(`✅ ${created.name} <${email}> (CPF: ${plan.cpf}) → ${summary}`)
   }
 
+  console.log('🔑 Usuários criados com senha padrão:', DEFAULT_PASSWORD)
   console.log('🎉 Seed concluído!')
 }
 
