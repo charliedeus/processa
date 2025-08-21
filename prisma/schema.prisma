@@ -74,9 +74,10 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  processes   Process[]
-  emails      UserEmail[]
-  departments Department[]
+  processes    Process[]
+  emails       UserEmail[]
+  departments  Department[]
+  ProcessClass ProcessClass[]
 
   @@index([name])
   @@map("organizations")
@@ -142,11 +143,48 @@ enum DepartmentRole {
   REQUESTER
 }
 
+model ProcessClass {
+  id             String       @id @default(uuid())
+  // escopo (tenant)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // identificação
+  code        String // ex: 'Acesso ao sistema'
+  name        String // 'Solicitação de acesso ao sistema'
+  description String?
+
+  // Hierarquia (para agrupar classes no futuro)
+  parentId String?
+  parent   ProcessClass?  @relation("ProcessClassHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children ProcessClass[] @relation("ProcessClassHierarchy")
+
+  // metadados úteis
+  isActive Boolean @default(true)
+  slaDays  Int?
+
+  // relacionamentos
+  processes Process[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([parentId])
+  @@map("process_classes")
+}
+
 model Process {
   id          String        @id @default(uuid())
   title       String
   description String?
   status      ProcessStatus @default(OPEN)
+
+  // classe do processo (obrigatória)
+  classId String
+  class   ProcessClass @relation(fields: [classId], references: [id], onDelete: Restrict)
 
   // tenant
   organizationId String

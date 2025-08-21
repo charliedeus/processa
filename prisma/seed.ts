@@ -19,8 +19,6 @@ function slugify(str: string) {
 
 /** ================= CPF helpers (gera CPF VÁLIDO) ================= */
 function cpfCalcDigit(nums: number[]) {
-  // Peso decrescente: para D1 usa 10..2 (nums.length = 9),
-  // para D2 usa 11..2 (nums.length = 10, incluindo D1)
   let factor = nums.length + 1
   const total = nums.reduce((acc, n) => acc + n * factor--, 0)
   const rest = total % 11
@@ -35,8 +33,6 @@ function cpfFromBase9(base9: string) {
 }
 
 function makeBase9(idx: number) {
-  // base determinística de 9 dígitos
-  // começa em 100000000 e incrementa
   return String(100_000_000 + idx).slice(-9)
 }
 
@@ -57,6 +53,7 @@ async function main() {
       prisma.user.deleteMany(),
       prisma.department.deleteMany(),
       prisma.organization.deleteMany(),
+      prisma.processClass.deleteMany(),
       prisma.account?.deleteMany?.(), // caso existam (Auth.js)
       prisma.session?.deleteMany?.(),
       prisma.verificationToken?.deleteMany?.(),
@@ -118,6 +115,31 @@ async function main() {
     },
   })
 
+  // 🔹 Classe de processos (ITSM): Solicitação de Acesso ao Sistema
+  console.log(
+    '🏷️ Criando classe de processo: Solicitação de Acesso ao Sistema...',
+  )
+  const acessoClasse = await prisma.processClass.upsert({
+    where: {
+      // requer @@unique([organizationId, code]) no schema
+      organizationId_code: {
+        organizationId: agerba.id,
+        code: 'ACESSO_SISTEMA',
+      },
+    },
+    update: {},
+    create: {
+      organizationId: agerba.id,
+      code: 'ACESSO_SISTEMA',
+      name: 'Solicitação de Acesso ao Sistema',
+      description:
+        'Pedido para criação, alteração ou revogação de acesso a sistemas corporativos.',
+      slaDays: 5,
+      isActive: true,
+    },
+  })
+  console.log(`✅ Classe criada: ${acessoClasse.name} (${acessoClasse.code})`)
+
   // Mapa código -> id
   const departments = await prisma.department.findMany({
     where: { organizationId: agerba.id },
@@ -126,7 +148,6 @@ async function main() {
   const deptByCode = new Map(departments.map((d) => [d.code, d.id]))
 
   console.log('👥 Gerando usuários...')
-  // Lista base de nomes (pode ampliar/alterar quando quiser)
   const baseNames = [
     'Fulano da Silva',
     'Maria Gerente',
@@ -160,10 +181,6 @@ async function main() {
     'Sabrina Tavares',
   ]
 
-  // Regras de distribuição:
-  // - Alternar departamentos principais para os usuários
-  // - Alguns usuários receberão um segundo setor (sempre MEMBER no extra)
-  // - Cada usuário no máximo 1 MANAGER (no setor "primário" dele)
   const deptCodes = ['DE', 'DPE', 'DQS', 'GAB', 'NGTIC'] as const
 
   type Plan = {
@@ -171,31 +188,18 @@ async function main() {
     cpf: string
     primaryDept: string
     isManagerPrimary: boolean
-    extraDepts: string[] // sempre MEMBER
+    extraDepts: string[]
   }
 
   const plans: Plan[] = baseNames.map((name, idx) => {
-    // ✅ CPF VÁLIDO (com D1/D2 calculados)
     const cpf = makeValidCpfByIndex(idx)
-
-    // Distribui o depto primário por rodada
     const primaryDept = deptCodes[idx % deptCodes.length]
-
-    // Regras de quem é MANAGER no primário:
-    // - Fulano da Silva (idx 0): MEMBER em NGTIC + MANAGER em GAB (ajuste específico abaixo)
-    // - Maria Gerente (idx 1): MANAGER na DE
-    // - Demais: a cada 5º usuário, será MANAGER no primário; outros MEMBER
-    let isManagerPrimary = idx % 5 === 1 // usuários 1,6,11,... como MANAGER no primário
-
-    // Alguns terão depto extra (sempre MEMBER no extra)
-    // Ex.: a cada 3º usuário adiciona um extra
+    let isManagerPrimary = idx % 5 === 1
     const extraDepts: string[] = []
     if (idx % 3 === 0) {
       const extrasPool = deptCodes.filter((c) => c !== primaryDept)
       extraDepts.push(extrasPool[(idx / 3) % extrasPool.length])
     }
-
-    // Ajustes específicos pedidos:
     if (name === 'Fulano da Silva') {
       return {
         name,
@@ -214,11 +218,9 @@ async function main() {
         extraDepts: [],
       }
     }
-
     return { name, cpf, primaryDept, isManagerPrimary, extraDepts }
   })
 
-  // hash padrão para todos
   const passwordHash = await hash(DEFAULT_PASSWORD, 10)
   const now = new Date()
 
@@ -232,7 +234,6 @@ async function main() {
         `Departamento primário ${plan.primaryDept} não encontrado`,
       )
 
-    // Monta memberships: primário (MANAGER ou MEMBER) + extras (sempre MEMBER)
     const membershipsData: Array<{
       role: DepartmentRole
       departmentId: string
@@ -255,7 +256,6 @@ async function main() {
       })
     }
 
-    // Tratamento especial para Fulano: garantir MEMBER no NGTIC e MANAGER no GAB
     if (plan.name === 'Fulano da Silva') {
       const gabId = deptByCode.get('GAB')
       const ngticId = deptByCode.get('NGTIC')
@@ -270,14 +270,12 @@ async function main() {
     const created = await prisma.user.create({
       data: {
         name: plan.name,
-        cpf: plan.cpf, // ✅ agora é VÁLIDO
+        cpf: plan.cpf,
 
-        // 👇 novos campos do schema para Auth.js (Credentials)
-        email, // e-mail principal (login)
-        emailVerified: now, // seed já como verificado
-        passwordHash, // senha padrão 123456
+        email,
+        emailVerified: now,
+        passwordHash,
 
-        // e-mails adicionais (mantém seu modelo)
         emails: {
           create: {
             email,
@@ -293,7 +291,6 @@ async function main() {
           create: membershipsData.map((m) => ({
             role: m.role,
             department: { connect: { id: m.departmentId } },
-            // isActive default(false) — mantém a regra de aprovação
           })),
         },
       },
