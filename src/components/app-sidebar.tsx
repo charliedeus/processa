@@ -1,14 +1,15 @@
-import * as React from "react"
-import { ChevronRight, File, Folder } from "lucide-react"
+import * as React from 'react'
+import { Book, ChevronRight, File, Folder } from 'lucide-react'
 
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible"
+} from '@/components/ui/collapsible'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -18,74 +19,48 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarRail,
-} from "@/components/ui/sidebar"
+} from '@/components/ui/sidebar'
+import { NavUser } from './nav-user'
+import { auth } from '@/lib/auth'
 
 // This is sample data.
 const data = {
-  changes: [
-    {
-      file: "README.md",
-      state: "M",
-    },
-    {
-      file: "api/hello/route.ts",
-      state: "U",
-    },
-    {
-      file: "app/layout.tsx",
-      state: "M",
-    },
-  ],
   tree: [
     [
-      "app",
+      'Processos',
       [
-        "api",
-        ["hello", ["route.ts"]],
-        "page.tsx",
-        "layout.tsx",
-        ["blog", ["page.tsx"]],
+        'api',
+        ['hello', ['route.ts']],
+        'page.tsx',
+        'layout.tsx',
+        ['blog', ['page.tsx']],
       ],
     ],
     [
-      "components",
-      ["ui", "button.tsx", "card.tsx"],
-      "header.tsx",
-      "footer.tsx",
+      'components',
+      ['ui', 'button.tsx', 'card.tsx'],
+      'header.tsx',
+      'footer.tsx',
     ],
-    ["lib", ["util.ts"]],
-    ["public", "favicon.ico", "vercel.svg"],
-    ".eslintrc.json",
-    ".gitignore",
-    "next.config.js",
-    "tailwind.config.js",
-    "package.json",
-    "README.md",
+    ['lib', ['util.ts']],
+    ['public', 'favicon.ico', 'vercel.svg'],
+    'README.md',
   ],
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export async function AppSidebar({
+  ...props
+}: React.ComponentProps<typeof Sidebar>) {
+  const session = await auth()
+
   return (
     <Sidebar {...props}>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Changes</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {data.changes.map((item, index) => (
-                <SidebarMenuItem key={index}>
-                  <SidebarMenuButton>
-                    <File />
-                    {item.file}
-                  </SidebarMenuButton>
-                  <SidebarMenuBadge>{item.state}</SidebarMenuBadge>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
+          <SidebarGroupLabel></SidebarGroupLabel>
+          <SidebarGroupContent></SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>Files</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {data.tree.map((item, index) => (
@@ -95,6 +70,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter>
+        <NavUser
+          user={{
+            name: session?.user?.name ?? 'Usuário',
+            email: session?.user?.email ?? '',
+            avatar: session?.user?.image ?? '',
+          }}
+        />
+      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )
@@ -106,10 +90,10 @@ function Tree({ item }: { item: string | any[] }) {
   if (!items.length) {
     return (
       <SidebarMenuButton
-        isActive={name === "button.tsx"}
+        isActive={name === 'button.tsx'}
         className="data-[active=true]:bg-transparent"
       >
-        <File />
+        <Book />
         {name}
       </SidebarMenuButton>
     )
@@ -119,7 +103,7 @@ function Tree({ item }: { item: string | any[] }) {
     <SidebarMenuItem>
       <Collapsible
         className="group/collapsible [&[data-state=open]>button>svg:first-child]:rotate-90"
-        defaultOpen={name === "components" || name === "ui"}
+        defaultOpen={name === 'components' || name === 'ui'}
       >
         <CollapsibleTrigger asChild>
           <SidebarMenuButton>
